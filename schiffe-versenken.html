@@ -112,11 +112,22 @@ textarea.code:focus{border-color:var(--accent)}
 .board.armed .cell.u:hover{background:var(--water-h);box-shadow:inset 0 0 0 2px var(--accent2)}
 .cell.nope{animation:nope .35s}
 @keyframes nope{25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
+.board{position:relative}
+.piecebar{position:absolute;display:flex;gap:6px;z-index:5;transition:left .12s ease,top .12s ease;pointer-events:none}
+.piecebar button{pointer-events:auto;appearance:none;border:0;width:40px;height:40px;border-radius:50%;display:grid;place-items:center;cursor:pointer;color:#fff;
+  box-shadow:0 6px 18px rgba(0,0,0,.45),0 0 0 2px rgba(6,17,31,.9);transition:transform .1s,filter .15s}
+.piecebar button:hover{filter:brightness(1.12);transform:scale(1.06)}
+.piecebar button:active{transform:scale(.94)}
+.piecebar svg{width:22px;height:22px;transition:transform .25s ease}
+.piecebar .pb-rot{background:linear-gradient(180deg,#5cb0ff,#2a7fe0)}
+.piecebar .pb-ok{background:linear-gradient(180deg,#4fe3a5,#22b57a)}
+.piecebar .pb-ok:disabled{background:#4a5568;cursor:not-allowed;filter:none;transform:none}
 .keys{display:grid;grid-template-columns:auto 1fr;gap:6px 10px;font-size:13px;color:var(--muted);align-items:center}
 .keys kbd{justify-self:start}
+@media (hover:none){.keys{display:none}}
 .rot{display:flex;align-items:center;justify-content:center;gap:8px}
 .rot svg{width:18px;height:18px;transition:transform .2s}
-.rot.v svg{transform:rotate(90deg)}
+
 .cell.ship{background:linear-gradient(180deg,var(--ship1),var(--ship2));border-radius:0}
 .cell.ship.v{background:linear-gradient(90deg,var(--ship1),var(--ship2))}
 .cell.sunk{background:linear-gradient(180deg,#b04a42,#6c2626);border-radius:0}
@@ -315,12 +326,12 @@ textarea.code:focus{border-color:var(--accent)}
     </div>
     <aside class="panel" id="placePanel">
       <h3>Flotte aufstellen</h3>
+      <p>Aufs Wasser klicken schiebt das blaue Schiff dorthin. Mit <b style="color:#6fd3ff">↻</b> drehen, mit <b style="color:var(--good)">✓</b> oder Klick aufs Schiff setzen. Gesetzte Schiffe lassen sich durch Anklicken wieder aufnehmen.</p>
       <div class="keys">
-        <span><kbd>Maus</kbd> / <kbd>←↑↓→</kbd></span><span>verschieben</span>
-        <span><kbd>Leertaste</kbd> / <kbd>R</kbd> / <kbd>Mausrad</kbd></span><span>drehen</span>
-        <span><kbd>Klick</kbd> / <kbd>Enter</kbd></span><span>setzen</span>
+        <span><kbd>←↑↓→</kbd></span><span>verschieben</span>
+        <span><kbd>Leertaste</kbd> / <kbd>R</kbd></span><span>drehen</span>
+        <span><kbd>Enter</kbd></span><span>setzen</span>
       </div>
-      <p>Klick auf ein gesetztes Schiff nimmt es wieder auf. Am Handy: tippen verschiebt, nochmal aufs Schiff tippen setzt.</p>
       <div class="ships" id="shipList"></div>
       <div class="grow">
         <button class="btn rot" id="rotBtn"></button>
@@ -582,6 +593,20 @@ function placePiece() {
   const nx = G.me.ships.find(x => !x.cells); if (nx) spawn(nx.id, last);
   renderGame();
 }
+let barSpin = 0;
+function positionBar(cells, ok) {
+  const b = $('#boardMine'), bar = b._bar;
+  if (!cells) { bar.hidden = true; return; }
+  bar.hidden = false; bar.querySelector('.pb-ok').disabled = !ok;
+  const [pr, pc] = cells[pivotOf(cells.length)], h = G.piece.h, el = b._cells;
+  const size = el[0][0].offsetWidth, step = el[0][1].offsetLeft - el[0][0].offsetLeft, bw = 86, bh = 40;
+  const cx = el[pr][pc].offsetLeft + size / 2, cy = el[pr][pc].offsetTop + size / 2;
+  let x, y;
+  if (h) { x = cx - bw / 2; y = pr < N - 1 ? cy + step * .5 + 8 : cy - step * .5 - 8 - bh; }
+  else   { y = cy - bh / 2; x = pc < N - 2 ? cx + step * .5 + 8 : cx - step * .5 - 8 - bw; }
+  x = Math.max(4, Math.min(b.clientWidth - bw - 4, x)); y = Math.max(4, Math.min(b.clientHeight - bh - 4, y));
+  bar.style.left = x + 'px'; bar.style.top = y + 'px';
+}
 function nope(cells) {
   const b = $('#boardMine')._cells;
   for (const [r, c] of cells) if (inB(r, c)) { const d = b[r][c]; d.classList.remove('nope'); void d.offsetWidth; d.classList.add('nope'); setTimeout(() => d.classList.remove('nope'), 400); }
@@ -599,6 +624,7 @@ function renderMine() {
     if (cells[r][c].className !== k) cells[r][c].className = k;
   }
   b.classList.toggle('placing', placing);
+  positionBar(placing ? pv : null, pvOk);
 }
 function renderEnemy() {
   const b = $('#boardEnemy'), cells = b._cells, v = G.view;
@@ -644,7 +670,7 @@ function renderShipList() {
   $('#readyBtn').disabled = !all || G.meReady;
   $('#readyBtn').textContent = G.meReady ? 'Warte auf ' + G.them + ' …' : 'Bereit';
   const rb = $('#rotBtn'), hz = !G.piece || G.piece.h; rb.classList.toggle('v', !hz);
-  rb.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M17 8l4 4-4 4M7 8l-4 4 4 4"/></svg>' + 'Drehen';
+  rb.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>' + 'Drehen';
   for (const id of ['#rndBtn', '#clrBtn']) $(id).disabled = G.meReady;
   $('#rotBtn').disabled = $('#setBtn').disabled = G.meReady || !previewCells();
 }
@@ -1075,25 +1101,24 @@ for (const b of document.querySelectorAll('#diffSeg button')) {
 }
 
 buildBoard($('#boardMine')); buildBoard($('#boardEnemy'));
+(() => {
+  const b = $('#boardMine'), bar = document.createElement('div');
+  bar.className = 'piecebar'; bar.hidden = true;
+  bar.innerHTML = '<button class="pb-rot" title="Drehen (Leertaste)" aria-label="Drehen">ROT</button><button class="pb-ok" title="Setzen (Enter)" aria-label="Setzen">OK</button>'.replace('ROT', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>').replace('OK', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>');
+  b.appendChild(bar); b._bar = bar;
+  bar.querySelector('.pb-rot').onclick = e => { e.stopPropagation(); barSpin += 180; e.currentTarget.firstChild.style.transform = `rotate(${barSpin}deg)`; rotate(); };
+  bar.querySelector('.pb-ok').onclick = e => { e.stopPropagation(); placePiece(); };
+})();
 const bm = $('#boardMine');
 const placing = () => G.phase === 'placement' && !G.meReady;
-bm.addEventListener('pointermove', e => {
-  if (!placing() || e.pointerType !== 'mouse') return;
-  const p = cellAt(e); if (p) movePieceTo(p[0], p[1]);
-});
 bm.addEventListener('click', e => {
   if (!placing()) return;
   const p = cellAt(e); if (!p) return;
   const id = G.me.grid[p[0]][p[1]];
   if (id >= 0) { pickUp(G.me.ships[id]); return; }
   if (!G.piece) return;
-  const touch = e.pointerType ? e.pointerType !== 'mouse' : matchMedia('(hover: none)').matches;
-  if (touch) {   // Handy: erst hinschieben, dann aufs Schiff tippen
-    const on = (pieceCells() || []).some(([r, c]) => r === p[0] && c === p[1]);
-    if (on) placePiece(); else movePieceTo(p[0], p[1]);
-    return;
-  }
-  movePieceTo(p[0], p[1]); placePiece();
+  const on = (pieceCells() || []).some(([r, c]) => r === p[0] && c === p[1]);
+  if (on) placePiece(); else movePieceTo(p[0], p[1]);
 });
 bm.addEventListener('contextmenu', e => { if (placing()) { e.preventDefault(); rotate(); } });
 let wheelT = 0;
