@@ -1,0 +1,1044 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Die Seite darf keine Server kontaktieren: keine Fonts, keine Skripte von außen, kein fetch/XHR.
+     Die einzige Verbindung ist die direkte WebRTC-Leitung zum Mitspieler (ohne STUN/TURN). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Schiffe versenken</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b2240'/%3E%3Cpath d='M10 38h44l-7 10H17z' fill='%23b9c7d6'/%3E%3Crect x='24' y='28' width='14' height='10' rx='2' fill='%237f93a8'/%3E%3Ccircle cx='46' cy='18' r='6' fill='%23ff5b4f'/%3E%3C/svg%3E">
+<style>
+:root{
+  --bg:#06111f; --panel:rgba(255,255,255,.045); --panel2:rgba(255,255,255,.08); --line:rgba(150,190,255,.14);
+  --text:#e8f1ff; --muted:#8ea6c4; --accent:#3d9bff; --accent2:#6fd3ff; --hit:#ff5b4f; --good:#3ddc97; --warn:#ffbe55;
+  --water:#0e2b48; --water-h:#17456f; --ship1:#c3d0dd; --ship2:#7f93a8; --cell:34px;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0}
+body{
+  min-height:100vh; color:var(--text);
+  font:15px/1.45 "Segoe UI Variable","Segoe UI",system-ui,-apple-system,sans-serif;
+  background:
+    radial-gradient(1100px 600px at 75% -10%,#123a66 0%,transparent 60%),
+    radial-gradient(900px 500px at -10% 110%,#0b3450 0%,transparent 60%), var(--bg);
+  background-attachment:fixed;
+}
+button,input,textarea{font:inherit;color:inherit}
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;max-width:1200px;margin:0 auto}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:.2px}
+.brand svg{width:30px;height:30px}
+.hud{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);font-size:13px;color:var(--muted)}
+.pill b{color:var(--text)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.dot.on{background:var(--good);box-shadow:0 0 10px var(--good)}
+main{max-width:1200px;margin:0 auto;padding:0 16px 48px}
+.screen[hidden]{display:none!important}
+
+.btn{appearance:none;border:1px solid var(--line);background:var(--panel2);padding:10px 16px;border-radius:12px;font-weight:600;cursor:pointer;min-height:44px;transition:transform .08s,background .15s,box-shadow .15s}
+.btn:hover{background:rgba(255,255,255,.12)}
+.btn:active{transform:translateY(1px)}
+.btn.primary{background:linear-gradient(180deg,#4aa6ff,#2a7fe0);border-color:transparent;box-shadow:0 6px 22px rgba(42,127,224,.35)}
+.btn.primary:hover{background:linear-gradient(180deg,#5cb0ff,#3288ea)}
+.btn.ghost{background:transparent}
+.btn.small{min-height:34px;padding:6px 12px;font-size:13px;border-radius:10px}
+.btn:disabled{opacity:.4;cursor:not-allowed;box-shadow:none}
+.icon{appearance:none;border:1px solid var(--line);background:var(--panel2);width:38px;height:38px;border-radius:10px;cursor:pointer;display:grid;place-items:center}
+.icon svg{width:18px;height:18px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+
+/* Menü */
+.hero{max-width:760px;margin:24px auto 0;text-align:center}
+.hero h1{font-size:clamp(32px,6vw,54px);line-height:1.05;margin:8px 0 10px;letter-spacing:-.5px;
+  background:linear-gradient(180deg,#fff,#9cc7ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p{color:var(--muted);margin:0 auto 26px;max-width:560px}
+.field{display:flex;flex-direction:column;gap:6px;max-width:320px;margin:0 auto 26px;text-align:left}
+.field span{font-size:13px;color:var(--muted)}
+.input{background:rgba(3,12,24,.6);border:1px solid var(--line);border-radius:12px;padding:11px 14px;outline:none;min-height:44px}
+.input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(61,155,255,.25)}
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.card{appearance:none;text-align:left;cursor:pointer;border:1px solid var(--line);background:var(--panel);border-radius:18px;padding:20px;display:flex;flex-direction:column;gap:6px;transition:transform .15s,border-color .15s,background .15s}
+.card:hover{transform:translateY(-2px);border-color:rgba(111,211,255,.45);background:var(--panel2)}
+.card .ic{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;background:rgba(61,155,255,.15);margin-bottom:6px}
+.card .ic svg{width:22px;height:22px}
+.card b{font-size:17px}
+.card span{color:var(--muted);font-size:14px}
+.seg{display:inline-flex;background:rgba(3,12,24,.6);border:1px solid var(--line);border-radius:12px;padding:3px;gap:3px}
+.seg button{appearance:none;border:0;background:transparent;padding:6px 14px;border-radius:9px;cursor:pointer;color:var(--muted);font-weight:600}
+.seg button.on{background:var(--panel2);color:var(--text)}
+.diff{margin-top:16px;display:flex;gap:10px;align-items:center;justify-content:center;color:var(--muted);font-size:14px}
+details.info{margin:34px auto 0;max-width:760px;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:4px 18px}
+details.info summary{cursor:pointer;padding:12px 0;font-weight:600;list-style:none}
+details.info summary::-webkit-details-marker{display:none}
+details.info summary::before{content:"›";display:inline-block;margin-right:8px;transition:transform .15s;color:var(--accent2)}
+details[open].info summary::before{transform:rotate(90deg)}
+details.info ul{margin:0 0 14px;padding-left:20px;color:var(--muted)}
+details.info li{margin:4px 0}
+details.info b{color:var(--text)}
+code,kbd{font-family:ui-monospace,Consolas,monospace;font-size:.92em;background:rgba(255,255,255,.07);padding:1px 6px;border-radius:6px}
+
+/* Verbinden */
+.wrap{max-width:680px;margin:10px auto 0}
+.step{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px;margin-top:14px}
+.step h3{margin:0 0 4px;font-size:16px;display:flex;gap:10px;align-items:center}
+.step h3 i{font-style:normal;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:rgba(61,155,255,.18);color:var(--accent2);font-size:13px}
+.step p{margin:0 0 12px;color:var(--muted);font-size:14px}
+.step.dim{opacity:.45;pointer-events:none}
+textarea.code{width:100%;min-height:92px;resize:vertical;background:rgba(3,12,24,.7);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font:12px/1.4 ui-monospace,Consolas,monospace;word-break:break-all;outline:none;margin-bottom:10px}
+textarea.code:focus{border-color:var(--accent)}
+.status{margin-top:14px;min-height:22px;color:var(--muted);font-size:14px;text-align:center}
+.status.err{color:var(--hit)}
+.status.ok{color:var(--good)}
+
+/* Spiel */
+.banner{display:flex;align-items:center;justify-content:center;gap:10px;margin:4px auto 18px;padding:10px 18px;border-radius:14px;background:var(--panel);border:1px solid var(--line);max-width:560px;text-align:center;font-weight:600;min-height:46px;transition:background .25s,border-color .25s}
+.banner.go{background:rgba(61,220,151,.12);border-color:rgba(61,220,151,.45)}
+.banner.wait{color:var(--muted)}
+.banner .spin{width:14px;height:14px;border:2px solid var(--muted);border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.boards{display:flex;gap:28px;justify-content:center;align-items:flex-start;flex-wrap:wrap}
+.bwrap h3{margin:0 0 8px;font-size:14px;color:var(--muted);font-weight:600;display:flex;justify-content:space-between;gap:10px}
+.bwrap[hidden]{display:none}
+.board{display:grid;grid-template-columns:repeat(11,var(--cell));grid-auto-rows:var(--cell);gap:2px;padding:10px;background:rgba(4,14,28,.65);border:1px solid var(--line);border-radius:18px;user-select:none;-webkit-user-select:none;touch-action:manipulation;transition:box-shadow .25s,border-color .25s}
+.board.armed{border-color:rgba(111,211,255,.5);box-shadow:0 0 0 4px rgba(61,155,255,.12),0 10px 40px rgba(0,0,0,.35)}
+.board.shake{animation:shake .35s}
+@keyframes shake{20%{transform:translate(-4px,1px)}40%{transform:translate(4px,-1px)}60%{transform:translate(-3px,0)}80%{transform:translate(2px,1px)}}
+.lab{display:grid;place-items:center;font-size:11px;color:var(--muted);font-weight:600}
+.cell{position:relative;background:var(--water);border-radius:6px;transition:background .15s}
+.board.armed .cell.u{cursor:crosshair}
+.board.armed .cell.u:hover{background:var(--water-h);box-shadow:inset 0 0 0 2px var(--accent2)}
+.board.placing .cell{cursor:pointer}
+.cell.ship{background:linear-gradient(180deg,var(--ship1),var(--ship2));border-radius:3px}
+.cell.ship.v{background:linear-gradient(90deg,var(--ship1),var(--ship2))}
+.cell.sunk{background:linear-gradient(180deg,#b04a42,#6c2626);border-radius:3px}
+.cell.sunk.v{background:linear-gradient(90deg,#b04a42,#6c2626)}
+.cell.h.first{border-radius:14px 3px 3px 14px}.cell.h.last{border-radius:3px 14px 14px 3px}
+.cell.v.first{border-radius:14px 14px 3px 3px}.cell.v.last{border-radius:3px 3px 14px 14px}
+.cell.h:not(.last)::after{content:"";position:absolute;top:0;bottom:0;right:-2px;width:2px;background:inherit}
+.cell.v:not(.last)::after{content:"";position:absolute;left:0;right:0;bottom:-2px;height:2px;background:inherit}
+.cell.mysunk{filter:saturate(.3) brightness(.65)}
+.cell.miss::before,.cell.water::before{content:"";position:absolute;inset:38%;border-radius:50%;background:var(--muted)}
+.cell.water::before{opacity:.3}
+.cell.ehit{background:#3b1f2d}
+.cell.hit::before,.cell.ehit::before,.cell.sunk::before{content:"";position:absolute;inset:20%;border-radius:50%;z-index:1;
+  background:radial-gradient(circle,#ffe29a 0 18%,var(--hit) 42%,rgba(255,91,79,0) 72%)}
+.cell.sunk::before{inset:30%;background:radial-gradient(circle,#ffd0c8 0 25%,rgba(255,255,255,0) 70%);opacity:.6}
+.cell.ghost{box-shadow:inset 0 0 0 2px rgba(195,208,221,.55);background:rgba(195,208,221,.12)}
+.cell.pv{background:rgba(61,155,255,.6)}
+.cell.pv.bad{background:rgba(255,91,79,.5)}
+.cell.pending{background:var(--water-h);animation:pulse .7s infinite alternate}
+@keyframes pulse{to{box-shadow:inset 0 0 0 2px var(--accent2)}}
+.fxr{position:absolute;inset:-35%;border-radius:50%;pointer-events:none;z-index:2}
+.fxr.boom{border:3px solid var(--hit);animation:boom .6s ease-out forwards}
+.fxr.splash{border:2px solid var(--accent2);animation:boom .8s ease-out forwards}
+@keyframes boom{from{transform:scale(.2);opacity:1}to{transform:scale(1.7);opacity:0}}
+.fleet{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;max-width:calc(11*var(--cell) + 40px)}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:999px;background:var(--panel);border:1px solid var(--line);font-size:12px;color:var(--muted)}
+.chip i{display:inline-flex;gap:2px}
+.chip i::before{content:"";display:block;height:6px;width:calc(var(--n)*7px);border-radius:3px;background:var(--ship2)}
+.chip.dead{text-decoration:line-through;opacity:.5}
+.chip.dead i::before{background:var(--hit)}
+
+.panel{width:min(100%,300px);background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:10px}
+.panel h3{margin:0;font-size:15px}
+.panel p{margin:0;color:var(--muted);font-size:13px}
+.ships{display:flex;flex-direction:column;gap:6px}
+.shipbtn{appearance:none;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;border-radius:12px;border:1px solid var(--line);background:rgba(3,12,24,.45);cursor:pointer;text-align:left}
+.shipbtn.sel{border-color:var(--accent);box-shadow:0 0 0 3px rgba(61,155,255,.2)}
+.shipbtn.done{opacity:.55}
+.shipbtn .bar{display:flex;gap:2px}
+.shipbtn .bar span{width:10px;height:10px;border-radius:3px;background:var(--ship2)}
+.shipbtn.done .bar span{background:var(--good)}
+.panel .grow{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+
+.chat{max-width:760px;margin:22px auto 0;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:10px}
+.chat[hidden]{display:none}
+.chatlog{max-height:110px;overflow:auto;font-size:14px;padding:2px 6px 8px;display:flex;flex-direction:column;gap:2px}
+.chatlog:empty{display:none}
+.chatlog b{color:var(--accent2);font-weight:600}
+.chatlog .me b{color:var(--good)}
+.chatrow{display:flex;gap:8px;align-items:center}
+.chatrow .input{flex:1;min-height:40px;padding:8px 12px}
+.emo{appearance:none;border:1px solid var(--line);background:transparent;border-radius:10px;width:40px;height:40px;cursor:pointer;font-size:18px}
+
+/* Dialog + Toasts */
+.modal{position:fixed;inset:0;background:rgba(2,8,16,.62);backdrop-filter:blur(6px);display:grid;place-items:center;padding:16px;z-index:50}
+.modal[hidden]{display:none}
+.dialog{width:min(440px,100%);background:#0c1d33;border:1px solid var(--line);border-radius:22px;padding:26px;text-align:center;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:pop .25s ease-out}
+@keyframes pop{from{transform:scale(.94);opacity:0}}
+.dialog h2{margin:0 0 6px;font-size:28px}
+.dialog p{color:var(--muted);margin:6px 0}
+.dialog .row{justify-content:center;margin-top:18px}
+.fair.ok{color:var(--good)}.fair.bad{color:var(--warn)}
+.toasts{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;align-items:center;z-index:60;pointer-events:none;width:min(92vw,460px)}
+.toast{background:#102843;border:1px solid var(--line);padding:10px 16px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.4);animation:pop .2s ease-out;font-size:14px;text-align:center}
+.toast.hit{border-color:rgba(255,91,79,.6)}
+.toast.good{border-color:rgba(61,220,151,.6)}
+
+@media (min-width:921px){ :root{--cell:clamp(26px,calc((100vw - 190px)/23),38px)} }
+@media (max-width:920px){
+  :root{--cell:clamp(22px,calc((100vw - 56px)/11 - 2px),38px)}
+  .boards{gap:18px}
+  .battle #enemyWrap{order:-1}
+  .panel{width:100%}
+}
+@media (max-width:640px){
+  .cards{grid-template-columns:1fr}
+  .top{padding:12px 16px}
+  .brand span{display:none}
+  .board{padding:6px;gap:2px}
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#0b2240"/><path d="M10 38h44l-7 10H17z" fill="#c3d0dd"/><rect x="24" y="28" width="14" height="10" rx="2" fill="#7f93a8"/><circle cx="46" cy="18" r="6" fill="#ff5b4f"/></svg>
+    <span>Schiffe versenken</span>
+  </div>
+  <div class="hud">
+    <span class="pill" id="netPill" hidden><span class="dot" id="netDot"></span><span id="netTxt"></span></span>
+    <span class="pill" id="scorePill" hidden></span>
+    <button class="icon" id="soundBtn" title="Ton an/aus" aria-label="Ton an/aus"></button>
+    <button class="btn small ghost" id="menuBtn" hidden>Menü</button>
+  </div>
+</header>
+
+<main>
+<!-- MENÜ -->
+<section class="screen" id="scr-menu">
+  <div class="hero">
+    <h1>Schiffe versenken</h1>
+    <p>Direkt von Browser zu Browser im Firmennetz. Keine Installation, kein Server, keine Daten nach draußen.</p>
+    <label class="field"><span>Dein Name</span><input class="input" id="nameIn" maxlength="20" placeholder="z. B. Lars" autocomplete="off"></label>
+    <div class="cards">
+      <button class="card" id="btnHost">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#6fd3ff" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></div>
+        <b>Spiel eröffnen</b><span>Du erzeugst einen Einladungscode und schickst ihn per Chat.</span>
+      </button>
+      <button class="card" id="btnJoin">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#6fd3ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/></svg></div>
+        <b>Beitreten</b><span>Du hast einen Code bekommen und fügst ihn ein.</span>
+      </button>
+      <button class="card" id="btnAi">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#6fd3ff" stroke-width="2" stroke-linecap="round"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 13h.01M15 13h.01"/></svg></div>
+        <b>Gegen den Computer</b><span>Zum Üben, ganz ohne Netzwerk.</span>
+      </button>
+    </div>
+    <div class="diff">Computer:
+      <div class="seg" id="diffSeg"><button data-d="easy">Leicht</button><button data-d="hard">Schwer</button></div>
+    </div>
+  </div>
+  <details class="info">
+    <summary>Datenschutz &amp; Technik</summary>
+    <ul>
+      <li><b>Nichts verlässt das Firmennetz.</b> Die Seite lädt keine Schriften, Skripte oder Bilder aus dem Internet – das erzwingt eine Content-Security-Policy im Dateikopf.</li>
+      <li>Die Verbindung läuft <b>direkt zwischen den zwei Browsern</b> (WebRTC, verschlüsselt mit DTLS). Es gibt keinen Vermittlungsserver, auch kein STUN/TURN.</li>
+      <li>Übertragen werden nur dein Name, die Schusskoordinaten, Treffermeldungen und Chatnachrichten – und nur an deine:n Mitspieler:in.</li>
+      <li>Im Browser gespeichert werden nur dein Name und die Ton-Einstellung.</li>
+      <li><b>Fair Play:</b> Vor dem Spiel schickt jede Seite einen SHA-256-Fingerabdruck ihrer Aufstellung. Am Ende wird die Aufstellung aufgedeckt und gegen alle Antworten geprüft – Schummeln fällt auf.</li>
+      <li>Regeln: 10×10, fünf Schiffe (5, 4, 3, 3, 2), Schiffe dürfen sich nicht berühren. Wer trifft, schießt nochmal.</li>
+    </ul>
+  </details>
+</section>
+
+<!-- VERBINDEN -->
+<section class="screen" id="scr-connect" hidden>
+  <div class="wrap">
+    <div id="hostFlow">
+      <div class="step">
+        <h3><i>1</i>Einladungscode</h3>
+        <p>Kopiere den Code und schick ihn per Teams, Mail oder Chat an deine:n Kolleg:in.</p>
+        <textarea class="code" id="offerOut" readonly placeholder="Code wird erzeugt …"></textarea>
+        <div class="row"><button class="btn primary" id="copyOffer" disabled>Code kopieren</button><button class="btn ghost small" id="regenOffer">Neu erzeugen</button></div>
+      </div>
+      <div class="step" id="hostStep2">
+        <h3><i>2</i>Antwortcode einfügen</h3>
+        <p>Dein Gegenüber bekommt nach dem Einfügen einen Antwortcode. Den fügst du hier ein.</p>
+        <textarea class="code" id="answerIn" placeholder="SV1.…"></textarea>
+        <button class="btn primary" id="connectBtn">Verbinden</button>
+      </div>
+    </div>
+    <div id="joinFlow">
+      <div class="step">
+        <h3><i>1</i>Einladungscode einfügen</h3>
+        <p>Füge den Code ein, den du bekommen hast.</p>
+        <textarea class="code" id="offerIn" placeholder="SV1.…"></textarea>
+        <button class="btn primary" id="answerBtn">Antwortcode erzeugen</button>
+      </div>
+      <div class="step dim" id="joinStep2">
+        <h3><i>2</i>Antwortcode zurückschicken</h3>
+        <p>Schick diesen Code zurück. Sobald er eingefügt ist, geht es automatisch los.</p>
+        <textarea class="code" id="answerOut" readonly></textarea>
+        <button class="btn primary" id="copyAnswer">Code kopieren</button>
+      </div>
+    </div>
+    <p class="status" id="connStatus"></p>
+    <details class="info" id="help">
+      <summary>Verbindung klappt nicht?</summary>
+      <ul>
+        <li>Beide Laptops müssen im <b>selben Netz</b> sein (Büro-LAN/WLAN oder beide im VPN). Gast-WLAN und Client-Isolation verhindern direkte Verbindungen.</li>
+        <li>Browser verstecken die eigene IP standardmäßig hinter einem <code>.local</code>-Namen. Manche Firmennetze lösen diese Namen nicht auf. Dann hilft:
+          <div class="row" style="margin:8px 0"><button class="btn small" id="unlockBtn">Direkte Netzwerkadresse verwenden</button></div>
+          Der Browser fragt dafür einmal nach dem Mikrofon – es wird <b>sofort wieder geschlossen</b> und nie genutzt. Danach den Code neu erzeugen. Es reicht, wenn eine Seite das macht.</li>
+        <li>Codes immer vollständig kopieren. Zeilenumbrüche beim Einfügen sind egal.</li>
+        <li>Am besten Edge oder Chrome verwenden.</li>
+      </ul>
+    </details>
+  </div>
+</section>
+
+<!-- SPIEL -->
+<section class="screen" id="scr-game" hidden>
+  <div class="banner" id="banner"></div>
+  <div class="boards" id="boards">
+    <div class="bwrap" id="mineWrap">
+      <h3><span>Deine Flotte</span><span id="mineInfo"></span></h3>
+      <div class="board" id="boardMine"></div>
+      <div class="fleet" id="fleetMine"></div>
+    </div>
+    <div class="bwrap" id="enemyWrap">
+      <h3><span id="enemyTitle">Gegner</span><span id="enemyInfo"></span></h3>
+      <div class="board" id="boardEnemy"></div>
+      <div class="fleet" id="fleetEnemy"></div>
+    </div>
+    <aside class="panel" id="placePanel">
+      <h3>Flotte aufstellen</h3>
+      <p>Schiff wählen, aufs Feld klicken. <kbd>R</kbd> oder Rechtsklick dreht. Klick auf ein gesetztes Schiff nimmt es wieder hoch.</p>
+      <div class="ships" id="shipList"></div>
+      <div class="grow">
+        <button class="btn" id="rotBtn">Drehen</button>
+        <button class="btn" id="rndBtn">Zufällig</button>
+      </div>
+      <button class="btn ghost small" id="clrBtn">Alles leeren</button>
+      <button class="btn primary" id="readyBtn" disabled>Bereit</button>
+    </aside>
+  </div>
+  <div class="chat" id="chat" hidden>
+    <div class="chatlog" id="chatLog"></div>
+    <div class="chatrow">
+      <input class="input" id="chatIn" maxlength="200" placeholder="Nachricht …" autocomplete="off">
+      <button class="emo" data-e="🎯">🎯</button><button class="emo" data-e="😅">😅</button><button class="emo" data-e="🔥">🔥</button><button class="emo" data-e="👍">👍</button>
+    </div>
+  </div>
+</section>
+</main>
+
+<div class="modal" id="modal" hidden><div class="dialog" id="dialog"></div></div>
+<div class="toasts" id="toasts"></div>
+
+<script>
+'use strict';
+/* ---------- Grundlagen ---------- */
+const N = 10, COLS = 'ABCDEFGHIJ';
+const FLEET = [
+  {name:'Flugzeugträger', len:5}, {name:'Schlachtschiff', len:4}, {name:'Kreuzer', len:3},
+  {name:'U-Boot', len:3}, {name:'Zerstörer', len:2}
+];
+const $ = s => document.querySelector(s);
+const rnd = n => Math.floor(Math.random() * n);
+const inB = (r, c) => r >= 0 && r < N && c >= 0 && c < N;
+const grid = v => Array.from({length:N}, () => Array(N).fill(v));
+const cellsOf = (r, c, len, h) => Array.from({length:len}, (_, i) => h ? [r, c + i] : [r + i, c]);
+const key = (r, c) => r * N + c;
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('sv.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('sv.' + k, JSON.stringify(v)); } catch {} }
+};
+function around(cells) {
+  const own = new Set(cells.map(([r, c]) => key(r, c))), seen = new Set(), out = [];
+  for (const [r, c] of cells) for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+    const rr = r + dr, cc = c + dc, k = key(rr, cc);
+    if (inB(rr, cc) && !own.has(k) && !seen.has(k)) { seen.add(k); out.push([rr, cc]); }
+  }
+  return out;
+}
+function canPlace(g, cells) {
+  return cells.every(([r, c]) => inB(r, c) && g[r][c] < 0) && around(cells).every(([r, c]) => g[r][c] < 0);
+}
+function newSide() {
+  return { grid: grid(-1), inc: grid(0), ships: FLEET.map((f, i) => ({id:i, name:f.name, len:f.len, cells:null, h:true, hits:0})) };
+}
+function place(side, s, cells, h) { s.cells = cells; s.h = h; for (const [r, c] of cells) side.grid[r][c] = s.id; }
+function unplace(side, s) { if (!s.cells) return; for (const [r, c] of s.cells) side.grid[r][c] = -1; s.cells = null; }
+function randomize(side) {
+  for (let t = 0; t < 500; t++) {
+    side.grid = grid(-1); side.ships.forEach(s => s.cells = null);
+    const ok = side.ships.every(s => {
+      for (let k = 0; k < 300; k++) {
+        const h = Math.random() < .5, r = rnd(h ? N : N - s.len + 1), c = rnd(h ? N - s.len + 1 : N);
+        const cells = cellsOf(r, c, s.len, h);
+        if (canPlace(side.grid, cells)) { place(side, s, cells, h); return true; }
+      }
+      return false;
+    });
+    if (ok) return;
+  }
+}
+function resolveShot(side, r, c) {
+  if (side.inc[r][c]) return null;
+  const id = side.grid[r][c];
+  if (id < 0) { side.inc[r][c] = 1; return {res:'miss'}; }
+  side.inc[r][c] = 2;
+  const s = side.ships[id]; s.hits++;
+  if (s.hits < s.len) return {res:'hit'};
+  return {res:'sunk', name:s.name, len:s.len, cells:s.cells, over: side.ships.every(x => x.hits >= x.len)};
+}
+function applyResult(view, r, c, res, sunk) {
+  view[r][c] = res.res === 'miss' ? 1 : 2;
+  if (res.res === 'sunk') {
+    for (const [a, b] of res.cells) view[a][b] = 3;
+    for (const [a, b] of around(res.cells)) if (!view[a][b]) view[a][b] = 4;
+    sunk.push({name:res.name, len:res.len, cells:res.cells});
+  }
+}
+function segInfo(cells) {
+  const m = new Map(); if (!cells || !cells.length) return m;
+  const h = cells.length < 2 || cells[0][0] === cells[1][0];
+  const s = [...cells].sort((a, b) => h ? a[1] - b[1] : a[0] - b[0]);
+  s.forEach(([r, c], i) => m.set(key(r, c), ' ' + (h ? 'h' : 'v') + (i === 0 ? ' first' : '') + (i === s.length - 1 ? ' last' : '')));
+  return m;
+}
+const cleanName = x => String(x || '').replace(/\s+/g, ' ').trim().slice(0, 20);
+
+/* ---------- Zustand ---------- */
+const G = {
+  phase:'menu', mode:null, isHost:true, diff: store.get('diff', 'hard'),
+  name: store.get('name', ''), them:'Gegner',
+  me:null, view:null, enemySunk:[], ai:null, aiView:null, aiSunk:[],
+  myTurn:false, busy:false, pending:null, gameNo:-1,
+  meReady:false, themReady:-1, commits:{}, salt:null,
+  score:{me:0, them:0}, stats:{shots:0, hits:0},
+  sel:0, horiz:true, hover:null, lastMine:null, lastTheirs:null,
+  reveal:null, fair:null, themRematch:-1,
+  pc:null, dc:null, connected:false, sound: store.get('sound', true)
+};
+
+/* ---------- Ton (synthetisch, WebAudio) ---------- */
+let AC = null;
+function ac() {
+  if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch { AC = null; } }
+  if (AC && AC.state === 'suspended') AC.resume();
+  return AC;
+}
+function noiseSrc(ctx, dur) {
+  const b = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * dur), ctx.sampleRate), d = b.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  const s = ctx.createBufferSource(); s.buffer = b; return s;
+}
+function env(ctx, t, a, peak, dur) {
+  const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(peak, t + a); g.gain.exponentialRampToValueAtTime(0.0001, t + dur); return g;
+}
+function sfx(kind) {
+  if (!G.sound) return; const ctx = ac(); if (!ctx) return;
+  const t = ctx.currentTime, out = ctx.createGain(); out.gain.value = .4; out.connect(ctx.destination);
+  const splash = (t0, len) => {
+    const n = noiseSrc(ctx, len), f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 1;
+    f.frequency.setValueAtTime(2200, t0); f.frequency.exponentialRampToValueAtTime(350, t0 + len);
+    n.connect(f).connect(env(ctx, t0, .015, .7, len)).connect(out); n.start(t0); n.stop(t0 + len);
+  };
+  const boom = (t0, len, vol) => {
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(140, t0); o.frequency.exponentialRampToValueAtTime(35, t0 + len);
+    o.connect(env(ctx, t0, .01, vol, len)).connect(out); o.start(t0); o.stop(t0 + len);
+    const n = noiseSrc(ctx, len), f = ctx.createBiquadFilter(); f.type = 'lowpass';
+    f.frequency.setValueAtTime(1600, t0); f.frequency.exponentialRampToValueAtTime(120, t0 + len);
+    n.connect(f).connect(env(ctx, t0, .005, vol * .8, len)).connect(out); n.start(t0); n.stop(t0 + len);
+  };
+  const tone = (t0, f, len, type = 'triangle', vol = .3) => {
+    const o = ctx.createOscillator(); o.type = type; o.frequency.value = f;
+    o.connect(env(ctx, t0, .02, vol, len)).connect(out); o.start(t0); o.stop(t0 + len);
+  };
+  if (kind === 'miss') splash(t, .55);
+  else if (kind === 'hit') boom(t, .45, .9);
+  else if (kind === 'sunk') { boom(t, .5, .9); boom(t + .18, 1.1, .8); }
+  else if (kind === 'win') [523, 659, 784, 1047].forEach((f, i) => tone(t + i * .13, f, .5));
+  else if (kind === 'lose') [392, 330, 262, 196].forEach((f, i) => tone(t + i * .18, f, .6, 'sine'));
+  else if (kind === 'tick') tone(t, 880, .08, 'sine', .08);
+}
+const ICON_ON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg>';
+const ICON_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="m22 9-6 6M16 9l6 6"/></svg>';
+
+/* ---------- UI-Helfer ---------- */
+function toast(text, cls = '') {
+  const d = document.createElement('div'); d.className = 'toast ' + cls; d.textContent = text;
+  $('#toasts').appendChild(d); setTimeout(() => d.remove(), 2800);
+  while ($('#toasts').children.length > 3) $('#toasts').firstChild.remove();
+}
+function show(id) {
+  for (const s of document.querySelectorAll('.screen')) s.hidden = s.id !== id;
+  $('#menuBtn').hidden = id === 'scr-menu';
+}
+function modal(html, bind) {
+  const d = $('#dialog'); d.innerHTML = html; $('#modal').hidden = false; if (bind) bind(d);
+}
+function closeModal() { $('#modal').hidden = true; }
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+async function copyText(ta, btn) {
+  const v = ta.value; let ok = false;
+  try { await navigator.clipboard.writeText(v); ok = true; } catch {}
+  if (!ok) { ta.focus(); ta.select(); try { ok = document.execCommand('copy'); } catch {} }
+  if (ok) { const t = btn.textContent; btn.textContent = 'Kopiert ✓'; setTimeout(() => btn.textContent = t, 1600); }
+  else toast('Kopieren nicht möglich – bitte markieren und mit Strg+C kopieren.');
+}
+function setStatus(t, cls = '') { const s = $('#connStatus'); s.textContent = t; s.className = 'status ' + cls; }
+
+/* ---------- Spielfeld-Aufbau ---------- */
+function buildBoard(root) {
+  root.innerHTML = ''; root._cells = grid(null);
+  root.appendChild(Object.assign(document.createElement('div'), {className:'lab'}));
+  for (let c = 0; c < N; c++) root.appendChild(Object.assign(document.createElement('div'), {className:'lab', textContent:COLS[c]}));
+  for (let r = 0; r < N; r++) {
+    root.appendChild(Object.assign(document.createElement('div'), {className:'lab', textContent:String(r + 1)}));
+    for (let c = 0; c < N; c++) {
+      const d = document.createElement('div'); d.className = 'cell'; d.dataset.r = r; d.dataset.c = c;
+      root.appendChild(d); root._cells[r][c] = d;
+    }
+  }
+}
+function fx(board, r, c, kind) {
+  const cell = board._cells[r][c]; const f = document.createElement('span');
+  f.className = 'fxr ' + kind; cell.appendChild(f); setTimeout(() => f.remove(), 900);
+}
+function cellAt(e) {
+  const t = e.target.closest('.cell'); if (!t) return null; return [+t.dataset.r, +t.dataset.c];
+}
+
+/* ---------- Rendern ---------- */
+function previewCells() {
+  if (!G.hover || G.sel < 0) return null;
+  const s = G.me.ships[G.sel]; if (!s || s.cells) return null;
+  let [r, c] = G.hover; if (G.horiz) c = Math.min(c, N - s.len); else r = Math.min(r, N - s.len);
+  return cellsOf(r, c, s.len, G.horiz);
+}
+function renderMine() {
+  const b = $('#boardMine'), cells = b._cells, me = G.me, placing = G.phase === 'placement' && !G.meReady;
+  const seg = new Map(); me.ships.forEach(s => { if (s.cells) segInfo(s.cells).forEach((v, k) => seg.set(k, v)); });
+  const pv = placing ? previewCells() : null, pvSet = new Set(pv ? pv.map(([r, c]) => key(r, c)) : []);
+  const pvOk = pv ? canPlace(me.grid, pv) : false;
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    let k = 'cell'; const id = me.grid[r][c];
+    if (id >= 0) { k += ' ship' + (seg.get(key(r, c)) || ''); if (me.ships[id].hits >= me.ships[id].len) k += ' mysunk'; }
+    const inc = me.inc[r][c]; if (inc === 1) k += ' miss'; else if (inc === 2) k += ' hit';
+    if (pvSet.has(key(r, c))) k += ' pv' + (pvOk ? '' : ' bad');
+    if (cells[r][c].className !== k) cells[r][c].className = k;
+  }
+  b.classList.toggle('placing', placing);
+}
+function renderEnemy() {
+  const b = $('#boardEnemy'), cells = b._cells, v = G.view;
+  const seg = new Map(); G.enemySunk.forEach(s => segInfo(s.cells).forEach((x, k) => seg.set(k, x)));
+  const ghost = new Map(); if (G.reveal) G.reveal.forEach(sc => segInfo(sc).forEach((x, k) => ghost.set(k, x)));
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    const x = v[r][c], kk = key(r, c); let k = 'cell';
+    if (x === 0) k += ' u'; else if (x === 1) k += ' miss'; else if (x === 2) k += ' ehit';
+    else if (x === 3) k += ' sunk' + (seg.get(kk) || ''); else if (x === 4) k += ' water';
+    if (x !== 3 && x !== 2 && ghost.has(kk)) k += ' ghost';
+    if (G.pending && G.pending[0] === r && G.pending[1] === c) k += ' pending';
+    if (cells[r][c].className !== k) cells[r][c].className = k;
+  }
+  b.classList.toggle('armed', G.phase === 'battle' && G.myTurn && !G.busy);
+}
+function chips(el, list) {
+  el.innerHTML = '';
+  for (const s of list) {
+    const d = document.createElement('span'); d.className = 'chip' + (s.dead ? ' dead' : '');
+    d.innerHTML = `<i style="--n:${s.len}"></i>`; d.appendChild(document.createTextNode(s.name)); el.appendChild(d);
+  }
+}
+function renderFleets() {
+  chips($('#fleetMine'), G.me.ships.map(s => ({name:s.name, len:s.len, dead:s.hits >= s.len})));
+  const sunkNames = G.enemySunk.map(s => s.name);
+  chips($('#fleetEnemy'), FLEET.map(f => { const i = sunkNames.indexOf(f.name); if (i >= 0) sunkNames.splice(i, 1); return {name:f.name, len:f.len, dead:i >= 0}; }));
+  const left = FLEET.length - G.enemySunk.length;
+  $('#enemyInfo').textContent = G.phase === 'placement' ? '' : `${left} von ${FLEET.length} übrig`;
+  const mineLeft = G.me.ships.filter(s => s.hits < s.len).length;
+  $('#mineInfo').textContent = G.phase === 'placement' ? '' : `${mineLeft} von ${FLEET.length} übrig`;
+}
+function renderShipList() {
+  const el = $('#shipList'); el.innerHTML = '';
+  G.me.ships.forEach(s => {
+    const b = document.createElement('button');
+    b.className = 'shipbtn' + (s.id === G.sel ? ' sel' : '') + (s.cells ? ' done' : '');
+    b.innerHTML = `<span></span><span class="bar">${'<span></span>'.repeat(s.len)}</span>`;
+    b.firstChild.textContent = s.name;
+    b.onclick = () => { if (G.meReady) return; if (s.cells) unplace(G.me, s); G.sel = s.id; renderGame(); };
+    el.appendChild(b);
+  });
+  const all = G.me.ships.every(s => s.cells);
+  $('#readyBtn').disabled = !all || G.meReady;
+  $('#readyBtn').textContent = G.meReady ? 'Warte auf ' + G.them + ' …' : 'Bereit';
+  for (const id of ['#rotBtn', '#rndBtn', '#clrBtn']) $(id).disabled = G.meReady;
+}
+function renderBanner() {
+  const b = $('#banner'); let html = '', cls = '';
+  const them = esc(G.them);
+  if (G.phase === 'placement') {
+    if (G.meReady) { html = `<span class="spin"></span>Warte, bis ${them} die Flotte aufgestellt hat …`; cls = 'wait'; }
+    else html = 'Stell deine Flotte auf' + (G.mode === 'net' && G.themReady === G.gameNo ? ` · <span style="color:var(--good)">${them} ist bereit</span>` : '');
+  } else if (G.phase === 'battle') {
+    if (G.pending) { html = '<span class="spin"></span>Schuss unterwegs …'; cls = 'wait'; }
+    else if (G.myTurn) { html = 'Du bist dran – feuer auf ' + (window.innerWidth <= 920 ? 'das obere' : 'das rechte') + ' Feld'; cls = 'go'; }
+    else { html = `<span class="spin"></span>${them} zielt …`; cls = 'wait'; }
+  } else if (G.phase === 'over') html = G.won ? 'Gewonnen! 🎉' : 'Verloren – Revanche?';
+  b.innerHTML = html; b.className = 'banner ' + cls;
+}
+function renderHud() {
+  const sp = $('#scorePill');
+  sp.hidden = G.phase === 'menu' || G.phase === 'connect';
+  sp.innerHTML = `${esc(G.name || 'Du')} <b>${G.score.me} : ${G.score.them}</b> ${esc(G.them)}`;
+  const np = $('#netPill'); np.hidden = G.mode !== 'net' || G.phase === 'menu';
+  $('#netDot').className = 'dot' + (G.connected ? ' on' : '');
+  $('#netTxt').textContent = G.connected ? 'Direkt verbunden' : 'Nicht verbunden';
+  $('#soundBtn').innerHTML = G.sound ? ICON_ON : ICON_OFF;
+}
+function renderGame() {
+  const placing = G.phase === 'placement';
+  $('#placePanel').hidden = !placing;
+  $('#enemyWrap').hidden = placing;
+  $('#boards').classList.toggle('battle', !placing);
+  $('#enemyTitle').textContent = 'Gewässer von ' + G.them;
+  $('#chat').hidden = G.mode !== 'net';
+  renderMine(); renderEnemy(); renderFleets(); renderBanner(); renderHud();
+  if (placing) renderShipList();
+}
+
+/* ---------- Ablauf ---------- */
+function newRound() {
+  G.gameNo++; G.phase = 'placement';
+  G.me = newSide(); G.view = grid(0); G.enemySunk = [];
+  G.myTurn = false; G.busy = false; G.pending = null; G.meReady = false; G.won = null;
+  G.reveal = null; G.fair = null;
+  G.stats = {shots:0, hits:0}; G.sel = 0; G.horiz = true; G.hover = null;
+  if (G.mode === 'ai') { G.ai = newSide(); randomize(G.ai); G.aiView = grid(0); G.aiSunk = []; }
+  closeModal(); show('scr-game'); renderGame();
+}
+async function sha256(s) {
+  if (!(window.crypto && crypto.subtle)) return null;
+  const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+const layoutStr = side => JSON.stringify(side.ships.map(s => s.cells));
+async function setReady() {
+  if (!G.me.ships.every(s => s.cells) || G.meReady) return;
+  G.meReady = true; G.hover = null;
+  if (G.mode === 'net') {
+    const a = new Uint8Array(16); crypto.getRandomValues(a);
+    G.salt = [...a].map(b => b.toString(16).padStart(2, '0')).join('');
+    send({t:'ready', game:G.gameNo, commit: await sha256(layoutStr(G.me) + G.salt)});
+  }
+  renderGame(); maybeStart();
+}
+function maybeStart() {
+  if (G.phase !== 'placement' || !G.meReady) return;
+  if (G.mode === 'net' && G.themReady !== G.gameNo) return;
+  G.phase = 'battle';
+  const hostStarts = G.gameNo % 2 === 0;
+  G.myTurn = G.isHost === hostStarts;
+  sfx('tick'); renderGame();
+  toast(G.myTurn ? 'Du beginnst.' : G.them + ' beginnt.');
+  if (G.mode === 'ai' && !G.myTurn) aiSoon();
+}
+function fire(r, c) {
+  if (G.phase !== 'battle' || !G.myTurn || G.busy || G.view[r][c]) return;
+  G.busy = true; G.stats.shots++;
+  if (G.mode === 'ai') { onMyResult(r, c, resolveShot(G.ai, r, c)); return; }
+  G.pending = [r, c]; send({t:'shot', game:G.gameNo, r, c}); renderGame();
+}
+function onMyResult(r, c, res) {
+  G.pending = null; applyResult(G.view, r, c, res, G.enemySunk);
+  const b = $('#boardEnemy');
+  if (res.res === 'miss') { sfx('miss'); fx(b, r, c, 'splash'); G.myTurn = false; }
+  else { G.stats.hits++; sfx(res.res); fx(b, r, c, 'boom'); }
+  if (res.res === 'sunk') toast(`${res.name} versenkt!`, 'good');
+  G.busy = false;
+  if (res.over) return endGame(true);
+  renderGame();
+  if (!G.myTurn && G.mode === 'ai') aiSoon();
+}
+function onTheirShot(r, c, res) {
+  const b = $('#boardMine');
+  if (res.res === 'miss') { sfx('miss'); fx(b, r, c, 'splash'); G.myTurn = true; }
+  else { sfx(res.res); fx(b, r, c, 'boom'); b.classList.remove('shake'); void b.offsetWidth; b.classList.add('shake'); }
+  if (res.res === 'sunk') toast(`Dein ${res.name} ist gesunken.`, 'hit');
+  if (res.over) return endGame(false);
+  renderGame();
+}
+function endGame(won) {
+  G.phase = 'over'; G.won = won; G.myTurn = false;
+  if (won) G.score.me++; else G.score.them++;
+  if (G.mode === 'ai') G.reveal = G.ai.ships.map(s => s.cells);
+  else send({t:'reveal', game:G.gameNo, ships:G.me.ships.map(s => s.cells), salt:G.salt});
+  renderGame(); setTimeout(() => sfx(won ? 'win' : 'lose'), 350);
+  setTimeout(showEnd, 1100);
+}
+function fairHtml() {
+  if (G.mode !== 'net') return '';
+  const them = esc(G.them);
+  if (G.fair === 'ok') return `<p class="fair ok">✓ Fair gespielt – die Aufstellung von ${them} passt zu allen Antworten.</p>`;
+  if (G.fair === 'bad') return `<p class="fair bad">⚠ Die aufgedeckte Aufstellung von ${them} passt nicht zu den Antworten.</p>`;
+  if (G.fair === 'na') return `<p class="fair">Fairness-Prüfung in diesem Browser nicht möglich.</p>`;
+  return `<p class="fair">Fairness wird geprüft …</p>`;
+}
+function showEnd() {
+  if (G.phase !== 'over') return;
+  const acc = G.stats.shots ? Math.round(G.stats.hits / G.stats.shots * 100) : 0;
+  const asked = G.themRematch === G.gameNo;
+  modal(`<h2>${G.won ? 'Gewonnen! 🎉' : 'Versenkt.'}</h2>
+    <p>${G.won ? 'Die gegnerische Flotte liegt am Meeresgrund.' : esc(G.them) + ' hat deine Flotte erwischt.'}</p>
+    <p><b style="color:var(--text)">${G.stats.hits}</b> Treffer bei <b style="color:var(--text)">${G.stats.shots}</b> Schüssen · ${acc} % Trefferquote</p>
+    <div id="fairBox">${fairHtml()}</div>
+    <p id="rematchNote" style="color:var(--good)">${asked ? esc(G.them) + ' will eine Revanche.' : ''}</p>
+    <div class="row"><button class="btn primary" id="mRe">${asked ? 'Revanche annehmen' : 'Revanche'}</button><button class="btn" id="mView">Feld ansehen</button><button class="btn ghost" id="mMenu">Menü</button></div>`,
+    d => {
+      d.querySelector('#mRe').onclick = rematch;
+      d.querySelector('#mView').onclick = closeModal;
+      d.querySelector('#mMenu').onclick = () => leave(true);
+    });
+  updateBannerForOver();
+}
+function updateBannerForOver() {
+  if (G.phase !== 'over') return;
+  const b = $('#banner');
+  b.innerHTML = (G.won ? 'Gewonnen! 🎉 ' : 'Verloren. ') + '<button class="btn small" id="bRe" style="margin-left:8px">Revanche</button>';
+  b.className = 'banner'; $('#bRe').onclick = rematch;
+}
+function rematch() {
+  if (G.mode === 'net') { if (!G.connected) return toast('Keine Verbindung mehr.'); send({t:'rematch', game:G.gameNo}); }
+  newRound();
+}
+
+/* ---------- Computer-Gegner ---------- */
+function aiSoon() { setTimeout(aiTurn, 600 + Math.random() * 500); }
+function aiTurn() {
+  if (G.phase !== 'battle' || G.myTurn || G.mode !== 'ai') return;
+  const [r, c] = aiPick();
+  const res = resolveShot(G.me, r, c);
+  applyResult(G.aiView, r, c, res, G.aiSunk);
+  onTheirShot(r, c, res);
+  if (G.phase === 'battle' && !G.myTurn) aiSoon();
+}
+function aiPick() {
+  const v = G.aiView, unknown = [], hits = [];
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) { if (v[r][c] === 0) unknown.push([r, c]); else if (v[r][c] === 2) hits.push([r, c]); }
+  const pick = a => a[rnd(a.length)];
+  if (G.diff === 'easy') {
+    if (hits.length && Math.random() < .55) {
+      const cand = [];
+      for (const [r, c] of hits) for (const [dr, dc] of [[1,0],[-1,0],[0,1],[0,-1]]) { const rr = r + dr, cc = c + dc; if (inB(rr, cc) && v[rr][cc] === 0) cand.push([rr, cc]); }
+      if (cand.length) return pick(cand);
+    }
+    return pick(unknown);
+  }
+  // Wahrscheinlichkeitskarte über alle noch möglichen Schiffslagen
+  const remaining = FLEET.map(f => f.len);
+  for (const s of G.aiSunk) { const i = remaining.indexOf(s.len); if (i >= 0) remaining.splice(i, 1); }
+  const score = grid(0);
+  for (const len of remaining) for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) for (const h of [true, false]) {
+    const cells = cellsOf(r, c, len, h);
+    if (!cells.every(([a, b]) => inB(a, b) && (v[a][b] === 0 || v[a][b] === 2))) continue;
+    if (around(cells).some(([a, b]) => v[a][b] === 2)) continue; // würde einen fremden Treffer berühren
+    const k = cells.filter(([a, b]) => v[a][b] === 2).length;
+    const w = k ? Math.pow(k + 1, 3) * 40 : 1;
+    for (const [a, b] of cells) if (v[a][b] === 0) score[a][b] += w;
+  }
+  let best = -1, bestCells = [];
+  for (const [r, c] of unknown) { const s = score[r][c]; if (s > best) { best = s; bestCells = [[r, c]]; } else if (s === best) bestCells.push([r, c]); }
+  return best > 0 ? pick(bestCells) : pick(unknown);
+}
+
+/* ---------- Netzwerk (WebRTC, manuelle Codes) ---------- */
+async function pack(o) {
+  const s = new Blob([JSON.stringify(o)]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+  const u = new Uint8Array(await new Response(s).arrayBuffer()); let b = '';
+  for (let i = 0; i < u.length; i++) b += String.fromCharCode(u[i]);
+  return 'SV1.' + btoa(b).replace(/=+$/, '');
+}
+async function unpack(t) {
+  t = (t || '').replace(/\s+/g, '');
+  const m = /^SV1\.([A-Za-z0-9+/]+)=*$/.exec(t);
+  if (!m) throw new Error('Das sieht nicht nach einem gültigen Code aus.');
+  let b = m[1]; while (b.length % 4) b += '=';
+  try {
+    const u = Uint8Array.from(atob(b), ch => ch.charCodeAt(0));
+    const s = new Blob([u]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return JSON.parse(await new Response(s).text());
+  } catch { throw new Error('Der Code ist unvollständig oder beschädigt.'); }
+}
+function closePeer() {
+  try { G.dc && G.dc.close(); } catch {} try { G.pc && G.pc.close(); } catch {}
+  G.dc = null; G.pc = null; G.connected = false;
+}
+function newPeer() {
+  closePeer();
+  const pc = new RTCPeerConnection({iceServers: []}); G.pc = pc;
+  pc.onconnectionstatechange = () => {
+    if (G.pc !== pc) return;
+    const s = pc.connectionState;
+    if (s === 'connecting') setStatus('Verbinde …');
+    if (s === 'failed') { setStatus('Verbindung fehlgeschlagen. Siehe Hinweise unten.', 'err'); $('#help').open = true; }
+    if ((s === 'failed' || s === 'disconnected' || s === 'closed') && G.connected) lost();
+  };
+  return pc;
+}
+function iceDone(pc) {
+  return new Promise(res => {
+    if (pc.iceGatheringState === 'complete') return res();
+    const t = setTimeout(res, 3000);
+    pc.addEventListener('icegatheringstatechange', () => { if (pc.iceGatheringState === 'complete') { clearTimeout(t); res(); } });
+  });
+}
+function wire(dc) {
+  G.dc = dc;
+  dc.onopen = () => {
+    if (G.dc !== dc) return;
+    G.connected = true; setStatus('Verbunden!', 'ok'); sfx('tick');
+    send({t:'hello', name:G.name || 'Gegner', v:1});
+    G.gameNo = -1; G.themReady = -1; G.themRematch = -1; G.commits = {}; G.score = {me:0, them:0};
+    newRound();
+  };
+  dc.onmessage = e => { let m; try { m = JSON.parse(e.data); } catch { return; } if (m && typeof m === 'object') onNet(m); };
+  dc.onclose = () => { if (G.dc === dc && G.connected) lost(); };
+}
+function send(o) { if (G.dc && G.dc.readyState === 'open') G.dc.send(JSON.stringify(o)); }
+function lost() {
+  G.connected = false; renderHud();
+  if (G.mode !== 'net' || G.phase === 'menu') return;
+  modal(`<h2>Verbindung getrennt</h2><p>Die Leitung zu ${esc(G.them)} ist weg.</p><div class="row"><button class="btn primary" id="mMenu">Zum Menü</button></div>`,
+    d => d.querySelector('#mMenu').onclick = () => leave(false));
+}
+function sdpInfo(sdp) {
+  const c = sdp.split(/\r?\n/).filter(l => l.startsWith('a=candidate'));
+  return { count:c.length, mdns:c.filter(l => /\.local /.test(l)).length };
+}
+async function hostStart() {
+  G.mode = 'net'; G.isHost = true;
+  $('#offerOut').value = ''; $('#copyOffer').disabled = true; $('#answerIn').value = '';
+  setStatus('Erzeuge Code …');
+  try {
+    const pc = newPeer(); wire(pc.createDataChannel('sv', {ordered:true}));
+    await pc.setLocalDescription(await pc.createOffer()); await iceDone(pc);
+    if (G.pc !== pc) return;
+    const sdp = pc.localDescription.sdp, info = sdpInfo(sdp);
+    $('#offerOut').value = await pack({k:'o', s:sdp, n:G.name}); $('#copyOffer').disabled = false;
+    setStatus(info.count ? 'Code bereit.' : 'Kein Netzwerkpfad gefunden – bist du mit dem Netz verbunden?', info.count ? '' : 'err');
+  } catch (e) { setStatus('Fehler: ' + e.message, 'err'); }
+}
+async function hostConnect() {
+  try {
+    const o = await unpack($('#answerIn').value);
+    if (o.k === 'o') throw new Error('Das ist ein Einladungscode, kein Antwortcode.');
+    if (o.k !== 'a' || typeof o.s !== 'string') throw new Error('Unbekannter Code.');
+    if (o.n) G.them = cleanName(o.n) || 'Gegner';
+    if (!G.pc || G.pc.signalingState !== 'have-local-offer') throw new Error('Bitte erst einen neuen Einladungscode erzeugen.');
+    await G.pc.setRemoteDescription({type:'answer', sdp:o.s});
+    setStatus('Verbinde …');
+  } catch (e) { setStatus(e.message, 'err'); }
+}
+async function joinStart() {
+  G.mode = 'net'; G.isHost = false;
+  try {
+    const o = await unpack($('#offerIn').value);
+    if (o.k === 'a') throw new Error('Das ist ein Antwortcode – du brauchst den Einladungscode.');
+    if (o.k !== 'o' || typeof o.s !== 'string') throw new Error('Unbekannter Code.');
+    if (o.n) G.them = cleanName(o.n) || 'Gegner';
+    setStatus('Erzeuge Antwortcode …');
+    const pc = newPeer(); pc.ondatachannel = e => wire(e.channel);
+    await pc.setRemoteDescription({type:'offer', sdp:o.s});
+    await pc.setLocalDescription(await pc.createAnswer()); await iceDone(pc);
+    if (G.pc !== pc) return;
+    $('#answerOut').value = await pack({k:'a', s:pc.localDescription.sdp, n:G.name});
+    $('#joinStep2').classList.remove('dim');
+    setStatus(`Schick den Antwortcode an ${G.them}. Es geht los, sobald er eingefügt ist.`);
+  } catch (e) { setStatus(e.message, 'err'); }
+}
+async function unlockAddr() {
+  try {
+    if (!navigator.mediaDevices) throw new Error('nicht unterstützt');
+    const s = await navigator.mediaDevices.getUserMedia({audio:true}); s.getTracks().forEach(t => t.stop());
+    toast('Freigegeben. Code jetzt neu erzeugen.', 'good');
+    if (G.isHost) hostStart(); else setStatus('Freigegeben – jetzt „Antwortcode erzeugen“ erneut klicken.', 'ok');
+  } catch (e) { toast('Nicht möglich: ' + e.message); }
+}
+function onNet(m) {
+  const okRC = Number.isInteger(m.r) && Number.isInteger(m.c) && inB(m.r, m.c);
+  switch (m.t) {
+    case 'hello': G.them = cleanName(m.name) || 'Gegner'; renderGame(); break;
+    case 'ready':
+      if (!Number.isInteger(m.game)) return;
+      G.themReady = m.game; G.commits[m.game] = typeof m.commit === 'string' ? m.commit : null;
+      if (m.game === G.gameNo) { if (G.phase === 'placement' && !G.meReady) toast(G.them + ' ist bereit.'); renderGame(); maybeStart(); }
+      break;
+    case 'shot': {
+      if (m.game !== G.gameNo || G.phase !== 'battle' || G.myTurn || !okRC) return;
+      const res = resolveShot(G.me, m.r, m.c); if (!res) return;
+      send({t:'result', game:G.gameNo, r:m.r, c:m.c, ...res});
+      onTheirShot(m.r, m.c, res); break;
+    }
+    case 'result': {
+      if (m.game !== G.gameNo || !G.pending || !okRC || G.pending[0] !== m.r || G.pending[1] !== m.c) return;
+      const res = cleanResult(m); if (!res) return;
+      onMyResult(m.r, m.c, res); break;
+    }
+    case 'reveal':
+      if (m.game !== G.gameNo || G.phase !== 'over' || !Array.isArray(m.ships)) return;
+      verify(m).then(f => {
+        G.fair = f;
+        if (f !== 'bad') { G.reveal = m.ships; renderEnemy(); }
+        const fb = document.getElementById('fairBox'); if (fb) fb.innerHTML = fairHtml();
+      });
+      break;
+    case 'rematch':
+      if (!Number.isInteger(m.game)) return;
+      G.themRematch = m.game;
+      if (G.phase === 'over' && m.game === G.gameNo) {
+        toast(G.them + ' will eine Revanche.', 'good');
+        const n = document.getElementById('rematchNote'); if (n) n.textContent = G.them + ' will eine Revanche.';
+        const b = document.getElementById('mRe'); if (b) b.textContent = 'Revanche annehmen';
+      }
+      break;
+    case 'chat': if (typeof m.text === 'string') addChat(G.them, m.text.slice(0, 200), false); break;
+    case 'bye': G.connected = false; toast(G.them + ' hat das Spiel verlassen.'); lost(); break;
+  }
+}
+function cleanResult(m) {
+  if (!['miss', 'hit', 'sunk'].includes(m.res)) return null;
+  const o = {res:m.res};
+  if (m.res === 'sunk') {
+    const ok = Array.isArray(m.cells) && m.cells.length >= 2 && m.cells.length <= 5 &&
+      m.cells.every(p => Array.isArray(p) && p.length === 2 && Number.isInteger(p[0]) && Number.isInteger(p[1]) && inB(p[0], p[1]));
+    if (!ok) return null;
+    o.cells = m.cells; o.len = m.cells.length; o.name = cleanName(m.name) || 'Schiff'; o.over = !!m.over;
+  }
+  return o;
+}
+async function verify(m) {
+  const commit = G.commits[m.game];
+  if (!commit || typeof m.salt !== 'string') return 'na';
+  const h = await sha256(JSON.stringify(m.ships) + m.salt);
+  if (!h) return 'na';
+  if (h !== commit) return 'bad';
+  // Aufstellung regelkonform?
+  const lens = m.ships.map(s => Array.isArray(s) ? s.length : 0).sort().join();
+  if (lens !== FLEET.map(f => f.len).sort().join()) return 'bad';
+  const g = grid(-1);
+  for (const [i, s] of m.ships.entries()) {
+    if (!s.every(p => Array.isArray(p) && inB(p[0], p[1]))) return 'bad';
+    const h1 = s.every(p => p[0] === s[0][0]), v1 = s.every(p => p[1] === s[0][1]);
+    const line = h1 ? s.map(p => p[1]) : v1 ? s.map(p => p[0]) : null;
+    if (!line) return 'bad';
+    line.sort((a, b) => a - b); if (line.some((x, j) => j && x !== line[j - 1] + 1)) return 'bad';
+    if (!canPlace(g, s)) return 'bad';
+    for (const [r, c] of s) g[r][c] = i;
+  }
+  // Jede Antwort muss zur Aufstellung passen
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    const x = G.view[r][c];
+    if (x === 1 && g[r][c] >= 0) return 'bad';
+    if ((x === 2 || x === 3) && g[r][c] < 0) return 'bad';
+  }
+  return 'ok';
+}
+function addChat(who, text, mine) {
+  const log = $('#chatLog'), d = document.createElement('div');
+  if (mine) d.className = 'me';
+  const b = document.createElement('b'); b.textContent = who + ': ';
+  d.appendChild(b); d.appendChild(document.createTextNode(text)); log.appendChild(d);
+  while (log.children.length > 40) log.firstChild.remove();
+  log.scrollTop = log.scrollHeight;
+  if (!mine) { toast(who + ': ' + text); sfx('tick'); }
+}
+function sendChat(text) {
+  text = String(text || '').trim().slice(0, 200); if (!text || !G.connected) return;
+  send({t:'chat', text}); addChat(G.name || 'Du', text, true);
+}
+function leave(confirmed) {
+  if (!confirmed && G.mode === 'net' && G.connected && G.phase !== 'menu') {
+    modal(`<h2>Spiel verlassen?</h2><p>Die Verbindung zu ${esc(G.them)} wird getrennt.</p><div class="row"><button class="btn primary" id="mYes">Verlassen</button><button class="btn" id="mNo">Weiterspielen</button></div>`,
+      d => { d.querySelector('#mYes').onclick = () => leave(true); d.querySelector('#mNo').onclick = closeModal; });
+    return;
+  }
+  if (G.mode === 'net') { send({t:'bye'}); setTimeout(closePeer, 150); }
+  G.phase = 'menu'; G.mode = null; G.them = 'Gegner'; G.connected = false;
+  $('#chatLog').innerHTML = '';
+  closeModal(); show('scr-menu'); renderHud();
+}
+
+/* ---------- Ereignisse ---------- */
+function startConnect(host) {
+  G.name = cleanName($('#nameIn').value); store.set('name', G.name);
+  if (!window.RTCPeerConnection || !window.CompressionStream) { toast('Dieser Browser kann das nicht. Bitte Edge oder Chrome verwenden.'); return; }
+  G.phase = 'connect'; G.mode = 'net'; G.them = 'Gegner';
+  $('#hostFlow').hidden = !host; $('#joinFlow').hidden = host;
+  $('#offerIn').value = ''; $('#answerOut').value = ''; $('#joinStep2').classList.add('dim'); $('#help').open = false;
+  setStatus(''); show('scr-connect'); renderHud();
+  if (host) hostStart(); else { closePeer(); $('#offerIn').focus(); }
+}
+$('#btnHost').onclick = () => startConnect(true);
+$('#btnJoin').onclick = () => startConnect(false);
+$('#btnAi').onclick = () => {
+  G.name = cleanName($('#nameIn').value); store.set('name', G.name);
+  closePeer(); G.mode = 'ai'; G.isHost = true; G.them = 'Computer'; G.gameNo = -1; G.score = {me:0, them:0};
+  newRound();
+};
+$('#copyOffer').onclick = () => copyText($('#offerOut'), $('#copyOffer'));
+$('#copyAnswer').onclick = () => copyText($('#answerOut'), $('#copyAnswer'));
+$('#regenOffer').onclick = hostStart;
+$('#connectBtn').onclick = hostConnect;
+$('#answerBtn').onclick = joinStart;
+$('#unlockBtn').onclick = unlockAddr;
+$('#menuBtn').onclick = () => leave(false);
+$('#soundBtn').onclick = () => { G.sound = !G.sound; store.set('sound', G.sound); renderHud(); if (G.sound) sfx('tick'); };
+$('#nameIn').value = G.name;
+$('#nameIn').addEventListener('change', () => { G.name = cleanName($('#nameIn').value); store.set('name', G.name); });
+for (const b of document.querySelectorAll('#diffSeg button')) {
+  b.classList.toggle('on', b.dataset.d === G.diff);
+  b.onclick = () => { G.diff = b.dataset.d; store.set('diff', G.diff); for (const x of document.querySelectorAll('#diffSeg button')) x.classList.toggle('on', x === b); };
+}
+
+buildBoard($('#boardMine')); buildBoard($('#boardEnemy'));
+const bm = $('#boardMine');
+bm.addEventListener('mousemove', e => {
+  if (G.phase !== 'placement' || G.meReady) return;
+  const p = cellAt(e); if (!p) return;
+  if (!G.hover || G.hover[0] !== p[0] || G.hover[1] !== p[1]) { G.hover = p; renderMine(); }
+});
+bm.addEventListener('mouseleave', () => { if (G.hover) { G.hover = null; if (G.me) renderMine(); } });
+bm.addEventListener('click', e => {
+  if (G.phase !== 'placement' || G.meReady) return;
+  const p = cellAt(e); if (!p) return;
+  const [r, c] = p, id = G.me.grid[r][c];
+  if (id >= 0) { const s = G.me.ships[id]; unplace(G.me, s); G.sel = id; G.horiz = s.h; G.hover = p; renderGame(); return; }
+  if (G.sel < 0 || G.me.ships[G.sel].cells) { const nx = G.me.ships.find(s => !s.cells); if (!nx) return; G.sel = nx.id; }
+  G.hover = p; const cells = previewCells();
+  if (cells && canPlace(G.me.grid, cells)) {
+    place(G.me, G.me.ships[G.sel], cells, G.horiz); sfx('tick');
+    const nx = G.me.ships.find(s => !s.cells); G.sel = nx ? nx.id : -1;
+  }
+  renderGame();
+});
+bm.addEventListener('contextmenu', e => { if (G.phase === 'placement') { e.preventDefault(); rotate(); } });
+function rotate() { if (G.meReady) return; G.horiz = !G.horiz; renderMine(); }
+$('#rotBtn').onclick = rotate;
+$('#rndBtn').onclick = () => { if (G.meReady) return; randomize(G.me); G.sel = -1; sfx('tick'); renderGame(); };
+$('#clrBtn').onclick = () => { if (G.meReady) return; G.me.ships.forEach(s => unplace(G.me, s)); G.sel = 0; renderGame(); };
+$('#readyBtn').onclick = setReady;
+$('#boardEnemy').addEventListener('click', e => { const p = cellAt(e); if (p) fire(p[0], p[1]); });
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input,textarea')) return;
+  if ((e.key === 'r' || e.key === 'R') && G.phase === 'placement') rotate();
+  if (e.key === 'Escape' && !$('#modal').hidden && G.phase === 'over') closeModal();
+});
+$('#chatIn').addEventListener('keydown', e => { if (e.key === 'Enter') { sendChat(e.target.value); e.target.value = ''; } });
+for (const b of document.querySelectorAll('.emo')) b.onclick = () => sendChat(b.dataset.e);
+window.addEventListener('resize', () => { if (G.phase === 'battle') renderBanner(); });
+window.addEventListener('beforeunload', () => { if (G.connected) send({t:'bye'}); });
+
+show('scr-menu'); renderHud();
+</script>
+</body>
+</html>
