@@ -107,17 +107,13 @@ textarea.code:focus{border-color:var(--accent)}
 .board.shake{animation:shake .35s}
 @keyframes shake{20%{transform:translate(-4px,1px)}40%{transform:translate(4px,-1px)}60%{transform:translate(-3px,0)}80%{transform:translate(2px,1px)}}
 .lab{display:grid;place-items:center;font-size:11px;color:var(--muted);font-weight:600}
-.cell{position:relative;background:var(--water);border-radius:6px;transition:background .15s}
+.cell{position:relative;background:var(--water);border-radius:6px}
 .board.armed .cell.u{cursor:crosshair}
 .board.armed .cell.u:hover{background:var(--water-h);box-shadow:inset 0 0 0 2px var(--accent2)}
-.board.placing{touch-action:none}
-.board.placing .cell{cursor:pointer}
-.board.placing .cell.ship{cursor:grab}
-.board.dragging,.board.dragging .cell{cursor:grabbing!important}
-.cell.ship.lift{opacity:.35}
 .cell.nope{animation:nope .35s}
 @keyframes nope{25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
-.shipbtn{touch-action:none}
+.keys{display:grid;grid-template-columns:auto 1fr;gap:6px 10px;font-size:13px;color:var(--muted);align-items:center}
+.keys kbd{justify-self:start}
 .rot{display:flex;align-items:center;justify-content:center;gap:8px}
 .rot svg{width:18px;height:18px;transition:transform .2s}
 .rot.v svg{transform:rotate(90deg)}
@@ -137,8 +133,10 @@ textarea.code:focus{border-color:var(--accent)}
   background:radial-gradient(circle,#ffe29a 0 18%,var(--hit) 42%,rgba(255,91,79,0) 72%)}
 .cell.sunk::before{inset:30%;background:radial-gradient(circle,#ffd0c8 0 25%,rgba(255,255,255,0) 70%);opacity:.6}
 .cell.ghost{box-shadow:inset 0 0 0 2px rgba(195,208,221,.55);background:rgba(195,208,221,.12)}
-.cell.pv{background:rgba(61,155,255,.6)}
-.cell.pv.bad{background:rgba(255,91,79,.5)}
+.cell.ship.pv{background:linear-gradient(180deg,#a9dcff,#3d9bff);transition:none;z-index:1}
+.cell.ship.pv.v{background:linear-gradient(90deg,#a9dcff,#3d9bff)}
+.cell.ship.pv.bad{background:linear-gradient(180deg,#ff9a90,#d6453b)}
+.cell.ship.pv.bad.v{background:linear-gradient(90deg,#ff9a90,#d6453b)}
 .cell.pending{background:var(--water-h);animation:pulse .7s infinite alternate}
 @keyframes pulse{to{box-shadow:inset 0 0 0 2px var(--accent2)}}
 .fxr{position:absolute;inset:-35%;border-radius:50%;pointer-events:none;z-index:2}
@@ -317,13 +315,21 @@ textarea.code:focus{border-color:var(--accent)}
     </div>
     <aside class="panel" id="placePanel">
       <h3>Flotte aufstellen</h3>
-      <p>Schiffe aufs Feld ziehen. <b style="color:var(--text)">Antippen dreht</b>, Ziehen verschiebt.</p>
+      <div class="keys">
+        <span><kbd>Maus</kbd> / <kbd>←↑↓→</kbd></span><span>verschieben</span>
+        <span><kbd>Leertaste</kbd> / <kbd>R</kbd> / <kbd>Mausrad</kbd></span><span>drehen</span>
+        <span><kbd>Klick</kbd> / <kbd>Enter</kbd></span><span>setzen</span>
+      </div>
+      <p>Klick auf ein gesetztes Schiff nimmt es wieder auf. Am Handy: tippen verschiebt, nochmal aufs Schiff tippen setzt.</p>
       <div class="ships" id="shipList"></div>
       <div class="grow">
         <button class="btn rot" id="rotBtn"></button>
-        <button class="btn" id="rndBtn">Zufällig</button>
+        <button class="btn" id="setBtn">Setzen</button>
       </div>
-      <button class="btn ghost small" id="clrBtn">Alles leeren</button>
+      <div class="grow">
+        <button class="btn" id="rndBtn">Zufällig</button>
+        <button class="btn ghost" id="clrBtn">Leeren</button>
+      </div>
       <button class="btn primary" id="readyBtn" disabled>Bereit</button>
     </aside>
   </div>
@@ -519,23 +525,77 @@ function cellAt(e) {
 }
 
 /* ---------- Rendern ---------- */
-function previewCells() {
-  if (!G.hover || G.sel < 0) return null;
-  const s = G.me.ships[G.sel]; if (!s || s.cells) return null;
-  let [r, c] = G.hover; if (G.horiz) c = Math.min(c, N - s.len); else r = Math.min(r, N - s.len);
-  r = Math.max(0, r); c = Math.max(0, c);
-  return cellsOf(r, c, s.len, G.horiz);
+/* Aktives Schiff wie ein Tetris-Stein: Drehpunkt in der Mitte, Wand schiebt zurück */
+const pivotOf = len => Math.floor((len - 1) / 2);
+function clampPiece(pc) {
+  const len = G.me.ships[pc.id].len, p = pivotOf(len), lo = p, hi = N - len + p;
+  const cl = (x, a, b) => Math.min(b, Math.max(a, x));
+  if (pc.h) { pc.r = cl(pc.r, 0, N - 1); pc.c = cl(pc.c, lo, hi); } else { pc.c = cl(pc.c, 0, N - 1); pc.r = cl(pc.r, lo, hi); }
+  return pc;
+}
+function pieceCells(pc = G.piece) {
+  if (!pc) return null; const len = G.me.ships[pc.id].len, p = pivotOf(len);
+  return pc.h ? cellsOf(pc.r, pc.c - p, len, true) : cellsOf(pc.r - p, pc.c, len, false);
+}
+function previewCells() { return G.piece && !G.me.ships[G.piece.id].cells ? pieceCells() : null; }
+function spawn(id, near) {
+  if (id < 0 || id == null) { G.piece = null; return; }
+  const base = near || G.piece || {r:4, c:4, h:true};
+  const pc = clampPiece({id, r:base.r, c:base.c, h:base.h});
+  if (!canPlace(G.me.grid, pieceCells(pc))) {   // nächstgelegene freie Stelle suchen
+    let best = null, bd = 1e9;
+    for (const h of [pc.h, !pc.h]) for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+      const t = clampPiece({id, r, c, h}); if (t.r !== r || t.c !== c) continue;
+      if (!canPlace(G.me.grid, pieceCells(t))) continue;
+      const d = Math.abs(r - pc.r) + Math.abs(c - pc.c) + (h !== pc.h ? .5 : 0);
+      if (d < bd) { bd = d; best = t; }
+    }
+    if (best) { G.piece = best; return; }
+  }
+  G.piece = pc;
+}
+function nextPiece() { const nx = G.me.ships.find(s => !s.cells); spawn(nx ? nx.id : -1); }
+function pickUp(s) {
+  if (G.meReady) return;
+  if (s.cells) { const p = pivotOf(s.len), [r, c] = s.cells[p]; unplace(G.me, s); G.piece = {id:s.id, r, c, h:s.h}; }
+  else spawn(s.id);
+  renderGame();
+}
+function movePiece(dr, dc) {
+  if (!G.piece || G.meReady) return;
+  clampPiece(Object.assign(G.piece, {r:G.piece.r + dr, c:G.piece.c + dc})); renderMine();
+}
+function movePieceTo(r, c) {
+  if (!G.piece || G.meReady) return;
+  if (G.piece.r === r && G.piece.c === c) return;
+  clampPiece(Object.assign(G.piece, {r, c})); renderMine();
+}
+function rotate() {
+  if (!G.piece || G.meReady) return;
+  G.piece.h = !G.piece.h; clampPiece(G.piece); sfx('tick'); renderMine(); renderShipList();
+}
+function placePiece() {
+  const cells = previewCells(); if (!cells || G.meReady) return;
+  if (!canPlace(G.me.grid, cells)) { nope(cells); return; }
+  const s = G.me.ships[G.piece.id]; place(G.me, s, cells, G.piece.h); sfx('tick');
+  const last = G.piece; G.piece = null;
+  const nx = G.me.ships.find(x => !x.cells); if (nx) spawn(nx.id, last);
+  renderGame();
+}
+function nope(cells) {
+  const b = $('#boardMine')._cells;
+  for (const [r, c] of cells) if (inB(r, c)) { const d = b[r][c]; d.classList.remove('nope'); void d.offsetWidth; d.classList.add('nope'); setTimeout(() => d.classList.remove('nope'), 400); }
 }
 function renderMine() {
   const b = $('#boardMine'), cells = b._cells, me = G.me, placing = G.phase === 'placement' && !G.meReady;
   const seg = new Map(); me.ships.forEach(s => { if (s.cells) segInfo(s.cells).forEach((v, k) => seg.set(k, v)); });
   const pv = placing ? previewCells() : null, pvSet = new Set(pv ? pv.map(([r, c]) => key(r, c)) : []);
-  const pvOk = pv ? canPlace(me.grid, pv) : false;
+  const pvOk = pv ? canPlace(me.grid, pv) : false, pvSeg = pv ? segInfo(pv) : new Map();
   for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
     let k = 'cell'; const id = me.grid[r][c];
     if (id >= 0) { k += ' ship' + (seg.get(key(r, c)) || ''); if (me.ships[id].hits >= me.ships[id].len) k += ' mysunk'; }
     const inc = me.inc[r][c]; if (inc === 1) k += ' miss'; else if (inc === 2) k += ' hit';
-    if (pvSet.has(key(r, c))) k += ' pv' + (pvOk ? '' : ' bad');
+    if (pvSet.has(key(r, c))) k = 'cell ship pv' + (pvSeg.get(key(r, c)) || '') + (pvOk ? '' : ' bad');
     if (cells[r][c].className !== k) cells[r][c].className = k;
   }
   b.classList.toggle('placing', placing);
@@ -574,18 +634,19 @@ function renderShipList() {
   const el = $('#shipList'); el.innerHTML = '';
   G.me.ships.forEach(s => {
     const b = document.createElement('button');
-    b.className = 'shipbtn' + (s.id === G.sel ? ' sel' : '') + (s.cells ? ' done' : '');
+    b.className = 'shipbtn' + (G.piece && s.id === G.piece.id ? ' sel' : '') + (s.cells ? ' done' : '');
     b.innerHTML = `<span></span><span class="bar">${'<span></span>'.repeat(s.len)}</span>`;
     b.firstChild.textContent = s.name;
-    b.onpointerdown = e => startDrag(e, s, 0, true);
+    b.onclick = () => pickUp(s);
     el.appendChild(b);
   });
   const all = G.me.ships.every(s => s.cells);
   $('#readyBtn').disabled = !all || G.meReady;
   $('#readyBtn').textContent = G.meReady ? 'Warte auf ' + G.them + ' …' : 'Bereit';
-  const rb = $('#rotBtn'); rb.classList.toggle('v', !G.horiz);
-  rb.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M17 8l4 4-4 4M7 8l-4 4 4 4"/></svg>' + (G.horiz ? 'Waagerecht' : 'Senkrecht');
-  for (const id of ['#rotBtn', '#rndBtn', '#clrBtn']) $(id).disabled = G.meReady;
+  const rb = $('#rotBtn'), hz = !G.piece || G.piece.h; rb.classList.toggle('v', !hz);
+  rb.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M17 8l4 4-4 4M7 8l-4 4 4 4"/></svg>' + 'Drehen';
+  for (const id of ['#rndBtn', '#clrBtn']) $(id).disabled = G.meReady;
+  $('#rotBtn').disabled = $('#setBtn').disabled = G.meReady || !previewCells();
 }
 function renderBanner() {
   const b = $('#banner'); let html = '', cls = '';
@@ -626,7 +687,7 @@ function newRound() {
   G.me = newSide(); G.view = grid(0); G.enemySunk = [];
   G.myTurn = false; G.busy = false; G.pending = null; G.meReady = false; G.won = null;
   G.reveal = null; G.fair = null;
-  G.stats = {shots:0, hits:0}; G.sel = 0; G.horiz = true; G.hover = null;
+  G.stats = {shots:0, hits:0}; G.piece = null; spawn(0);
   if (G.mode === 'ai') { G.ai = newSide(); randomize(G.ai); G.aiView = grid(0); G.aiSunk = []; }
   closeModal(); show('scr-game'); renderGame();
 }
@@ -638,7 +699,7 @@ async function sha256(s) {
 const layoutStr = side => JSON.stringify(side.ships.map(s => s.cells));
 async function setReady() {
   if (!G.me.ships.every(s => s.cells) || G.meReady) return;
-  G.meReady = true; G.hover = null;
+  G.meReady = true; G.piece = null;
   if (G.mode === 'net') {
     const a = new Uint8Array(16); crypto.getRandomValues(a);
     G.salt = [...a].map(b => b.toString(16).padStart(2, '0')).join('');
@@ -1015,101 +1076,46 @@ for (const b of document.querySelectorAll('#diffSeg button')) {
 
 buildBoard($('#boardMine')); buildBoard($('#boardEnemy'));
 const bm = $('#boardMine');
-bm.addEventListener('mousemove', e => {
-  if (G.phase !== 'placement' || G.meReady || drag) return;
-  const p = cellAt(e); if (!p) return;
-  if (!G.hover || G.hover[0] !== p[0] || G.hover[1] !== p[1]) { G.hover = p; renderMine(); }
-});
-bm.addEventListener('mouseleave', () => { if (G.hover && !drag) { G.hover = null; if (G.me) renderMine(); } });
-bm.addEventListener('pointerdown', e => {
-  if (G.phase !== 'placement' || G.meReady || e.button > 0) return;
-  const p = cellAt(e); if (!p) return;
-  const id = G.me.grid[p[0]][p[1]]; if (id < 0) return;
-  const s = G.me.ships[id];
-  startDrag(e, s, s.cells.findIndex(([r, c]) => r === p[0] && c === p[1]), false);
+const placing = () => G.phase === 'placement' && !G.meReady;
+bm.addEventListener('pointermove', e => {
+  if (!placing() || e.pointerType !== 'mouse') return;
+  const p = cellAt(e); if (p) movePieceTo(p[0], p[1]);
 });
 bm.addEventListener('click', e => {
-  if (G.phase !== 'placement' || G.meReady || performance.now() - dragEnd < 300) return;
+  if (!placing()) return;
   const p = cellAt(e); if (!p) return;
-  const [r, c] = p; if (G.me.grid[r][c] >= 0) return;
-  if (G.sel < 0 || G.me.ships[G.sel].cells) { const nx = G.me.ships.find(s => !s.cells); if (!nx) return; G.sel = nx.id; }
-  G.hover = p; const cells = previewCells();
-  if (cells && canPlace(G.me.grid, cells)) {
-    place(G.me, G.me.ships[G.sel], cells, G.horiz); sfx('tick');
-    const nx = G.me.ships.find(s => !s.cells); G.sel = nx ? nx.id : -1;
-  } else if (cells) nope(cells);
-  renderGame();
-});
-bm.addEventListener('contextmenu', e => { if (G.phase === 'placement') { e.preventDefault(); rotate(); } });
-bm.addEventListener('wheel', e => {
-  if (G.phase !== 'placement' || G.meReady || !previewCells()) return;
-  e.preventDefault(); if (Math.abs(e.deltaY) > 2) rotate();
-}, {passive:false});
-
-/* Ziehen & Drehen */
-let drag = null, dragEnd = -1e9;
-function startDrag(e, s, grab, fromList) {
-  if (G.phase !== 'placement' || G.meReady) return;
-  drag = {s, grab: Math.max(0, grab), fromList, x:e.clientX, y:e.clientY, moved:false, prev: s.cells ? {cells:s.cells, h:s.h} : null, id:e.pointerId};
-  if (!fromList) e.preventDefault();
-}
-window.addEventListener('pointermove', e => {
-  if (!drag || e.pointerId !== drag.id) return;
-  if (!drag.moved) {
-    if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 6) return;
-    drag.moved = true; unplace(G.me, drag.s); G.sel = drag.s.id;
-    if (drag.prev) G.horiz = drag.prev.h;
-    bm.classList.add('dragging');
-  }
-  const el = document.elementFromPoint(e.clientX, e.clientY), cell = el && el.closest('#boardMine .cell');
-  let hv = null;
-  if (cell) { const r = +cell.dataset.r, c = +cell.dataset.c; hv = G.horiz ? [r, c - drag.grab] : [r - drag.grab, c]; }
-  if (String(hv) !== String(G.hover)) { G.hover = hv; renderMine(); }
-});
-window.addEventListener('pointerup', e => {
-  if (!drag || e.pointerId !== drag.id) return;
-  const d = drag; drag = null; bm.classList.remove('dragging');
-  if (!d.moved) {
-    if (d.fromList) { if (d.s.cells) unplace(G.me, d.s); G.sel = d.s.id; renderGame(); }
-    else rotateInPlace(d.s, d.grab);
+  const id = G.me.grid[p[0]][p[1]];
+  if (id >= 0) { pickUp(G.me.ships[id]); return; }
+  if (!G.piece) return;
+  const touch = e.pointerType ? e.pointerType !== 'mouse' : matchMedia('(hover: none)').matches;
+  if (touch) {   // Handy: erst hinschieben, dann aufs Schiff tippen
+    const on = (pieceCells() || []).some(([r, c]) => r === p[0] && c === p[1]);
+    if (on) placePiece(); else movePieceTo(p[0], p[1]);
     return;
   }
-  dragEnd = performance.now();
-  const cells = G.hover ? previewCells() : null;
-  if (cells && canPlace(G.me.grid, cells)) { place(G.me, d.s, cells, G.horiz); sfx('tick'); }
-  else if (d.prev) { place(G.me, d.s, d.prev.cells, d.prev.h); if (cells) nope(cells); }
-  const nx = G.me.ships.find(s => !s.cells); G.sel = nx ? nx.id : -1;
-  renderGame();
+  movePieceTo(p[0], p[1]); placePiece();
 });
-window.addEventListener('pointercancel', () => {
-  if (!drag) return; const d = drag; drag = null; bm.classList.remove('dragging');
-  if (d.moved && d.prev) place(G.me, d.s, d.prev.cells, d.prev.h);
-  renderGame();
-});
-function rotateInPlace(s, i) {
-  const [pr, pc] = s.cells[i], h = !s.h, prev = {cells:s.cells, h:s.h};
-  unplace(G.me, s);
-  const order = [i, ...Array.from({length:s.len}, (_, k) => k).filter(k => k !== i)];
-  for (const k of order) {
-    const cells = h ? cellsOf(pr, pc - k, s.len, true) : cellsOf(pr - k, pc, s.len, false);
-    if (canPlace(G.me.grid, cells)) { place(G.me, s, cells, h); G.horiz = h; sfx('tick'); renderGame(); return; }
-  }
-  place(G.me, s, prev.cells, prev.h); renderGame(); nope(prev.cells);
-  toast('Kein Platz zum Drehen – zieh das Schiff woanders hin.');
-}
-function nope(cells) {
-  const b = bm._cells;
-  for (const [r, c] of cells) if (inB(r, c)) { const d = b[r][c]; d.classList.remove('nope'); void d.offsetWidth; d.classList.add('nope'); setTimeout(() => d.classList.remove('nope'), 400); }
-}
-function rotate() { if (G.meReady) return; G.horiz = !G.horiz; renderMine(); renderShipList(); }
-$('#rotBtn').onclick = rotate;
-$('#rndBtn').onclick = () => { if (G.meReady) return; randomize(G.me); G.sel = -1; sfx('tick'); renderGame(); };
-$('#clrBtn').onclick = () => { if (G.meReady) return; G.me.ships.forEach(s => unplace(G.me, s)); G.sel = 0; renderGame(); };
+bm.addEventListener('contextmenu', e => { if (placing()) { e.preventDefault(); rotate(); } });
+let wheelT = 0;
+bm.addEventListener('wheel', e => {
+  if (!placing() || !previewCells()) return;
+  e.preventDefault(); const t = performance.now(); if (t - wheelT > 180 && Math.abs(e.deltaY) > 2) { wheelT = t; rotate(); }
+}, {passive:false});
+const blurAfter = fn => e => { e.currentTarget.blur(); fn(); };
+$('#rotBtn').onclick = blurAfter(rotate);
+$('#setBtn').onclick = blurAfter(placePiece);
+$('#rndBtn').onclick = blurAfter(() => { if (G.meReady) return; randomize(G.me); G.piece = null; sfx('tick'); renderGame(); });
+$('#clrBtn').onclick = blurAfter(() => { if (G.meReady) return; G.me.ships.forEach(s => unplace(G.me, s)); G.piece = null; spawn(0); renderGame(); });
 $('#readyBtn').onclick = setReady;
 $('#boardEnemy').addEventListener('click', e => { const p = cellAt(e); if (p) fire(p[0], p[1]); });
 document.addEventListener('keydown', e => {
   if (e.target.matches('input,textarea')) return;
-  if ((e.key === 'r' || e.key === 'R') && G.phase === 'placement') rotate();
+  if (G.phase === 'placement' && !G.meReady && $('#modal').hidden) {
+    const k = e.key, mv = {ArrowUp:[-1,0], ArrowDown:[1,0], ArrowLeft:[0,-1], ArrowRight:[0,1]}[k];
+    if (mv) { e.preventDefault(); movePiece(...mv); return; }
+    if (k === ' ' || k === 'r' || k === 'R') { e.preventDefault(); rotate(); return; }
+    if (k === 'Enter') { e.preventDefault(); placePiece(); return; }
+  }
   if (e.key === 'Escape' && !$('#modal').hidden && G.phase === 'over') closeModal();
 });
 $('#chatIn').addEventListener('keydown', e => { if (e.key === 'Enter') { sendChat(e.target.value); e.target.value = ''; } });
